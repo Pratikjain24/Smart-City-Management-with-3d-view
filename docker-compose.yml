@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  mahatwin-db:
+    # Includes both the TimescaleDB and PostGIS extensions used by Phase 1.
+    image: timescale/timescaledb-ha:pg16
+    container_name: mahatwin-postgis
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-mahatwin_mumbai}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mahatwin-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: mahatwin-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mahatwin-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mahatwin-backend
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@mahatwin-db:5432/${POSTGRES_DB:-mahatwin_mumbai}
+      - REDIS_URL=redis://redis:6379/0
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - CESIUM_ION_TOKEN=${CESIUM_ION_TOKEN:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      mahatwin-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - mahatwin-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}
+        VITE_CESIUM_ION_TOKEN: ${VITE_CESIUM_ION_TOKEN:-}
+    container_name: mahatwin-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - mahatwin-net
+
+volumes:
+  postgis_data:
+
+networks:
+  mahatwin-net:
+    driver: bridge
